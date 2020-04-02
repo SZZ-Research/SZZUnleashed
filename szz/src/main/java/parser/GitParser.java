@@ -288,15 +288,21 @@ public class GitParser {
     for (Commit commit : commits) {
       List<FileAnnotationGraph> graphs = new LinkedList<>();
       for (Map.Entry<String, DiffEntry.ChangeType> file : commit.changeTypes.entrySet()) {
-        FileAnnotationGraph tracedCommits = traceFileChanges(file.getKey(), commit, this.depth);
-
-        graphs.add(tracedCommits);
+        String filePath = file.getKey();
+        if (checkFileType(filePath)) {
+          FileAnnotationGraph tracedCommits = traceFileChanges(filePath, commit, this.depth);
+          graphs.add(tracedCommits);
+        }
       }
 
       fileGraph.put(commit.getHashString(), graphs);
     }
 
     return fileGraph;
+  }
+
+  private boolean checkFileType(String filePath) {
+    return !filePath.contains("src/test/") && !filePath.endsWith(".md");
   }
 
   /**
