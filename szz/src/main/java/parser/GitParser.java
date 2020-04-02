@@ -65,6 +65,8 @@ public class GitParser {
 
   private int depth;
 
+  private BlameCommand blameCommand;
+
   /**
    * The constructor for the GitParser class. It requires the repository to exist and will fail if
    * its not. The resultPath is also created if it's not existing.
@@ -80,6 +82,7 @@ public class GitParser {
     builder.addCeilingDirectory(new File(path));
     builder.findGitDir(new File(path));
     this.repo = builder.build();
+    this.blameCommand = new BlameCommand(this.repo);
 
     this.resultPath = resultPath;
 
@@ -163,8 +166,6 @@ public class GitParser {
 
     if (step == 0) return null;
 
-    BlameCommand command = new BlameCommand(this.repo);
-
     /*
      * Save all line numbers for the source commits deletions.
      */
@@ -180,53 +181,36 @@ public class GitParser {
               .collect(Collectors.toList());
     else return null;
 
-    /*
-     * Create a graph to store line mappings in.
-     */
-    FileAnnotationGraph graph = new FileAnnotationGraph();
-    graph.filePath = filePath;
-    graph.revisions = new LinkedList<>();
-    graph.mappings = new HashMap<>();
-    graph.sub_graphs = new HashMap<>();
-
+    FileAnnotationGraph graph = createEmptyGraph(filePath);
     graph.revisions.add(ObjectId.toString(source.commit.toObjectId()));
 
-    int index = 0;
-
-    RevCommit parent = source.commit.getParent(0);
-    command.setStartCommit(parent);
-    command.setFilePath(filePath);
-
-    BlameResult found = command.call();
+    BlameResult found = callBlameCommand(filePath, source.commit.getParent(0));
     if (found == null) return graph;
 
-    Map<RevCommit, Map<Integer, Integer>> foundRevisions = new HashMap<>();
+    Map<RevCommit, Map<Integer, Integer>> foundRevisions = linkRevisionsWithLineNumbers(delIndexes, found);
+    populateGraphWithMappings(graph, foundRevisions);
+    populateSubgraphs(filePath, step, graph, foundRevisions);
 
-    /*
-     * Grab the blamed commits and get the line numbers.
-     */
-    for (int i = 0; i < delIndexes.size(); i++) {
-      index = delIndexes.get(i);
-      if (index == -1) continue;
-      try {
-        RevCommit foundRev = found.getSourceCommit(i);
+    return graph;
+  }
 
-        if (!foundRevisions.containsKey(foundRev)) {
-          Map<Integer, Integer> blamedLines = new LinkedHashMap<>();
+  /*
+   * Start building subgraphs.
+   */
+  private void populateSubgraphs(String filePath, int step, FileAnnotationGraph graph, Map<RevCommit, Map<Integer, Integer>> foundRevisions) throws IOException, GitAPIException {
+    for (Map.Entry<RevCommit, Map<Integer, Integer>> rev : foundRevisions.entrySet()) {
+      Commit subCommit = this.util.getCommitDiffingLines(rev.getKey());
+      FileAnnotationGraph subGraph = traceFileChanges(filePath, subCommit, step - 1);
 
-          blamedLines.put(index, getSourceLine(found, index));
-          foundRevisions.put(foundRev, blamedLines);
-        } else {
-          foundRevisions.get(foundRev).put(index, getSourceLine(found, index));
-        }
-      } catch (Exception e) {
-        // This means that a row didn't exist in a previous revision..
-      }
+      if (subGraph == null) break;
+      graph.sub_graphs.put(subCommit.getHashString(), subGraph);
     }
+  }
 
-    /*
-     * Save all mappings in the annotationgraph.
-     */
+  /*
+   * Save all mappings in the annotationgraph.
+   */
+  private void populateGraphWithMappings(FileAnnotationGraph graph, Map<RevCommit, Map<Integer, Integer>> foundRevisions) {
     for (Map.Entry<RevCommit, Map<Integer, Integer>> rev : foundRevisions.entrySet()) {
       String revSha = ObjectId.toString(rev.getKey().toObjectId());
 
@@ -243,18 +227,51 @@ public class GitParser {
         }
       }
     }
+  }
 
-    /*
-     * Start building subgraphs.
-     */
-    for (Map.Entry<RevCommit, Map<Integer, Integer>> rev : foundRevisions.entrySet()) {
-      Commit subCommit = this.util.getCommitDiffingLines(rev.getKey());
-      FileAnnotationGraph subGraph = traceFileChanges(filePath, subCommit, step - 1);
+  /*
+   * Grab the blamed commits and get the line numbers.
+   */
+  private Map<RevCommit, Map<Integer, Integer>> linkRevisionsWithLineNumbers(List<Integer> delIndexes, BlameResult found) {
+    int index;
+    Map<RevCommit, Map<Integer, Integer>> foundRevisions = new HashMap<>();
 
-      if (subGraph == null) break;
-      graph.sub_graphs.put(subCommit.getHashString(), subGraph);
+    for (int i = 0; i < delIndexes.size(); i++) {
+      index = delIndexes.get(i);
+      if (index == -1) continue;
+      try {
+        RevCommit foundRev = found.getSourceCommit(delIndexes.get(i) - 1);
+
+        if (!foundRevisions.containsKey(foundRev)) {
+          Map<Integer, Integer> blamedLines = new LinkedHashMap<>();
+
+          blamedLines.put(index, getSourceLine(found, index));
+          foundRevisions.put(foundRev, blamedLines);
+        } else {
+          foundRevisions.get(foundRev).put(index, getSourceLine(found, index));
+        }
+      } catch (Exception e) {
+        // This means that a row didn't exist in a previous revision..
+      }
     }
+    return foundRevisions;
+  }
 
+  private BlameResult callBlameCommand(String filePath, RevCommit startCommit) throws GitAPIException {
+    blameCommand.setStartCommit(startCommit);
+    blameCommand.setFilePath(filePath);
+    return blameCommand.call();
+  }
+
+  /*
+   * Create a graph to store line mappings in.
+   */
+  private FileAnnotationGraph createEmptyGraph(String filePath) {
+    FileAnnotationGraph graph = new FileAnnotationGraph();
+    graph.filePath = filePath;
+    graph.revisions = new LinkedList<>();
+    graph.mappings = new HashMap<>();
+    graph.sub_graphs = new HashMap<>();
     return graph;
   }
 
