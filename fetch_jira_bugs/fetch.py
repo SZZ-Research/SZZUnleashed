@@ -19,8 +19,6 @@ def fetch(project_issue_code, jira_project_name):
         + 'AND issuetype = Bug '\
         + 'AND status in (Resolved, Closed) '\
         + 'AND resolution = Fixed '\
-        + 'AND component = core '\
-        + 'AND created <= "2018-02-20 10:34" '\
         + 'ORDER BY created DESC'
     jql = quote(jql, safe='')
 
