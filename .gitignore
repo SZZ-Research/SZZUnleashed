@@ -29,3 +29,10 @@ szz/gradle.properties
 .gradle
 
 model/data
+
+.idea/
+fetch_jira_bugs/gitlog.json
+fetch_jira_bugs/issue_list.json
+fetch_jira_bugs/issues/
+szz/.idea/
+szz/issues/
