@@ -240,7 +240,7 @@ public class GitParser {
       index = delIndexes.get(i);
       if (index == -1) continue;
       try {
-        RevCommit foundRev = found.getSourceCommit(delIndexes.get(i) - 1);
+        RevCommit foundRev = found.getSourceCommit(index);
 
         if (!foundRevisions.containsKey(foundRev)) {
           Map<Integer, Integer> blamedLines = new LinkedHashMap<>();
