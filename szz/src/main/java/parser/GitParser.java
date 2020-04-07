@@ -27,14 +27,10 @@ package parser;
 import data.Issues;
 import graph.AnnotationMap;
 import graph.FileAnnotationGraph;
-import java.io.*;
-import java.util.*;
-import java.util.stream.*;
 import org.eclipse.jgit.api.BlameCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.blame.BlameResult;
 import org.eclipse.jgit.diff.DiffEntry;
-import org.eclipse.jgit.diff.RawText;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -45,6 +41,13 @@ import org.json.simple.parser.ParseException;
 import org.slf4j.Logger;
 import util.CommitUtil;
 import util.JSONUtil;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * A class which is capable to search and build line mapping graphs from a local repository. Uses
@@ -59,7 +62,6 @@ public class GitParser {
   private Issues issues;
 
   private String resultPath;
-  private String DEFAULT_RES_PATH = "./results";
 
   private Logger logger;
 
@@ -75,7 +77,7 @@ public class GitParser {
    * @param resultPath the path to where the JSON files will be written.
    */
   public GitParser(String path, String resultPath, int depth, int customContext)
-      throws IOException, GitAPIException {
+      throws IOException {
     FileRepositoryBuilder builder = new FileRepositoryBuilder();
     builder.setMustExist(true);
 
@@ -95,7 +97,7 @@ public class GitParser {
       if (!resDirectory.exists()) resDirectory.mkdirs();
     } else {
       System.err.println("Resultpath not set! Using deafult directory instead.");
-      this.resultPath = this.DEFAULT_RES_PATH;
+      this.resultPath = "./results";
     }
 
     this.util = new CommitUtil(this.repo, customContext);
@@ -119,33 +121,7 @@ public class GitParser {
     this.logger = logger;
   }
 
-  /**
-   * Map lines between one commit and another.
-   *
-   * @param foundCommit a blameresult containing information about a commit that have made changes
-   *     to a file.
-   * @param filePath the file that the commit have made changes to.
-   * @return a mapping with the original revision file lines as keys and the values the
-   *     corresponding lines in the other commit.
-   */
-  private List<Integer> getLineMappings(BlameResult foundCommit, String filePath)
-      throws IOException, GitAPIException {
-    foundCommit.computeAll();
-    RawText foundContent = foundCommit.getResultContents();
-
-    /*
-     * Easiest solution, maybe better with a list and a pair class?
-     */
-    List<Integer> lineMappings = new LinkedList<>();
-
-    for (int line = 0; line < foundContent.size(); line++) {
-      lineMappings.add(foundCommit.getSourceLine(line));
-    }
-    return lineMappings;
-  }
-
-  private int getSourceLine(BlameResult foundCommit, int index)
-      throws IOException, GitAPIException {
+  private int getSourceLine(BlameResult foundCommit, int index) throws IOException {
     foundCommit.computeAll();
 
     try {
@@ -387,19 +363,4 @@ public class GitParser {
     return this.issues.revisions;
   }
 
-  /** Finds commits that indicates a bugfix and then builds a line mapping graph. */
-  public Set<RevCommit> searchForBugFixes() throws IOException, GitAPIException {
-    if (repo == null) {
-      return Collections.emptySet();
-    }
-
-    SimpleCommitSearcher search = new SimpleCommitSearcher(this.repo);
-    Set<RevCommit> foundCommits = search.filterOnBugPatterns();
-    this.logger.info(String.format("Found %d number of commits", foundCommits.size()));
-
-    if (foundCommits.size() == 0) {
-      return Collections.emptySet();
-    }
-    return foundCommits;
-  }
 }
