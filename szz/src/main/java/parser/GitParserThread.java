@@ -28,14 +28,17 @@ import graph.AnnotationMap;
 import graph.FileAnnotationGraph;
 import heuristics.BugFinderFactory;
 import heuristics.BugIntroducerFinder;
-import java.io.*;
-import java.util.*;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import util.Configuration;
 import util.JSONUtil;
+
+import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
 /**
  * A thread that starts a parser instance. It also logs the activity of the parser
@@ -60,8 +63,6 @@ public class GitParserThread extends Thread {
       this.bugFinder = bugFinder;
     } catch (IOException e) {
       e.printStackTrace();
-    } catch (GitAPIException e) {
-      e.printStackTrace();
     }
 
     // this.contextMap = MDC.getCopyOfContextMap();
@@ -80,8 +81,6 @@ public class GitParserThread extends Thread {
       this.issues = issues;
       this.bugFinder = conf.getBugFinder();
     } catch (IOException e) {
-      e.printStackTrace();
-    } catch (GitAPIException e) {
       e.printStackTrace();
     }
   }
@@ -107,9 +106,7 @@ public class GitParserThread extends Thread {
       logger.info("Saving found bug introducing commits...");
       JSONUtil.saveBugIntroducingCommits(bugIntroducers, this.parser.getResultPath());
 
-    } catch (IOException e) {
-      e.printStackTrace();
-    } catch (GitAPIException e) {
+    } catch (IOException | GitAPIException e) {
       e.printStackTrace();
     }
   }
