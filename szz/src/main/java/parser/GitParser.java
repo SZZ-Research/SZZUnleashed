@@ -25,6 +25,7 @@
 package parser;
 
 import data.Issues;
+import diff.JavaFileExtension;
 import graph.AnnotationMap;
 import graph.FileAnnotationGraph;
 import org.eclipse.jgit.api.BlameCommand;
@@ -32,9 +33,15 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.blame.BlameResult;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.incava.diffj.lang.DiffJException;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
@@ -46,7 +53,9 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -57,8 +66,11 @@ import java.util.stream.Collectors;
  */
 public class GitParser {
 
+  private static final List<String> USELESS_FILE_EXTENSIONS = Arrays.asList(".md", ".txt", ".markdown");
+
   private CommitUtil util;
   private Repository repo;
+  private RevWalk revWalk;
   private Issues issues;
 
   private String resultPath;
@@ -84,6 +96,7 @@ public class GitParser {
     builder.addCeilingDirectory(new File(path));
     builder.findGitDir(new File(path));
     this.repo = builder.build();
+    this.revWalk = new RevWalk(repo);
     this.blameCommand = new BlameCommand(this.repo);
 
     this.resultPath = resultPath;
@@ -138,24 +151,14 @@ public class GitParser {
    * @param source the source commit from which the trace should start at.
    */
   private FileAnnotationGraph traceFileChanges(String filePath, Commit source, int step)
-      throws IOException, GitAPIException {
+          throws IOException, GitAPIException {
 
-    if (step == 0) return null;
+    if (step == 0 || !source.diffWithParent.containsKey(filePath)) return null;
 
     /*
      * Save all line numbers for the source commits deletions.
      */
-    List<Integer> delIndexes = null;
-    if (source.diffWithParent.containsKey(filePath))
-      delIndexes =
-          source
-              .diffWithParent
-              .get(filePath)
-              .deletions
-              .stream()
-              .map(s -> parseInt(s[0]))
-              .collect(Collectors.toList());
-    else return null;
+    List<Integer> delIndexes = buildDelIndexes(filePath, source);
 
     FileAnnotationGraph graph = createEmptyGraph(filePath);
     graph.revisions.add(ObjectId.toString(source.commit.toObjectId()));
@@ -168,6 +171,48 @@ public class GitParser {
     populateSubgraphs(filePath, step, graph, foundRevisions);
 
     return graph;
+  }
+
+  private List<Integer> buildDelIndexes(String filePath, Commit source) {
+    List<Integer> delIndexes = source
+            .diffWithParent
+            .get(filePath)
+            .deletions
+            .stream()
+            .map(s -> parseInt(s[0]))
+            .collect(Collectors.toList());
+
+    if(filePath.endsWith(".java")) {
+      Set<Integer> changesFromDiffJ = changesFromDiffJ(filePath, source);
+      delIndexes = delIndexes.stream().filter(changesFromDiffJ::contains).collect(Collectors.toList());
+    }
+
+    return delIndexes;
+  }
+
+  private Set<Integer> changesFromDiffJ(String filePath, Commit source) {
+    try {
+      JavaFileExtension revision = getFileContentAtRevision(filePath, source.commit);
+      JavaFileExtension parentRev = getFileContentAtRevision(filePath, source.commit.getParent(0));
+      // Converting line numbers to indexes.
+      return revision.affectedLineNumbers(parentRev).stream().map(it ->
+              it-1
+      ).collect(Collectors.toSet());
+    } catch (Exception e) {
+      e.printStackTrace();
+      return Collections.emptySet();
+    }
+  }
+
+  private JavaFileExtension getFileContentAtRevision(String filePath, RevCommit revision) throws IOException, DiffJException {
+    RevTree tree = revWalk.parseCommit(revision.getId()).getTree();
+    TreeWalk treeWalk = TreeWalk.forPath(repo, filePath, tree);
+    ObjectId blobId = treeWalk.getObjectId(0);
+    ObjectReader objectReader = repo.newObjectReader();
+    ObjectLoader objectLoader = objectReader.open(blobId);
+    byte[] bytes = objectLoader.getBytes();
+
+    return new JavaFileExtension(new String(bytes, StandardCharsets.UTF_8));
   }
 
   /*
@@ -212,8 +257,8 @@ public class GitParser {
     int index;
     Map<RevCommit, Map<Integer, Integer>> foundRevisions = new HashMap<>();
 
-    for (int i = 0; i < delIndexes.size(); i++) {
-      index = delIndexes.get(i);
+    for (Integer delIndex : delIndexes) {
+      index = delIndex;
       if (index == -1) continue;
       try {
         RevCommit foundRev = found.getSourceCommit(index);
@@ -278,7 +323,15 @@ public class GitParser {
   }
 
   private boolean checkFileType(String filePath) {
-    return !filePath.contains("src/test/") && !filePath.endsWith(".md");
+    return !filePath.contains("/test/") && checkFileExtension(filePath);
+  }
+
+  private boolean checkFileExtension(String filePath) {
+    AtomicBoolean validExtension = new AtomicBoolean(true);
+    USELESS_FILE_EXTENSIONS.forEach(it -> {
+      validExtension.set(!filePath.endsWith(it));
+    });
+    return validExtension.get();
   }
 
   /**
@@ -325,7 +378,7 @@ public class GitParser {
    *
    * @param path the path to the json file where the changes are stored.
    */
-  public Set<RevCommit> readBugFixCommits(String path) throws IOException, GitAPIException {
+  public Set<RevCommit> readBugFixCommits(String path) throws IOException {
     if (repo == null) return Collections.emptySet();
 
     this.issues = new Issues();
