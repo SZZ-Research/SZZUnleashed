@@ -194,12 +194,16 @@ public class GitParser {
     try {
       JavaFileExtension revision = getFileContentAtRevision(filePath, source.commit);
       JavaFileExtension parentRev = getFileContentAtRevision(filePath, source.commit.getParent(0));
+
+      if(revision == null || parentRev == null) {
+        return Collections.emptySet();
+      }
       // Converting line numbers to indexes.
       return revision.affectedLineNumbers(parentRev).stream().map(it ->
               it-1
       ).collect(Collectors.toSet());
     } catch (Exception e) {
-      e.printStackTrace();
+      logger.warn(String.format("Exception ### File %s from: %s to: %s", filePath, source.commit.toString(), source.commit.getParent(0).toString()));
       return Collections.emptySet();
     }
   }
@@ -207,6 +211,9 @@ public class GitParser {
   private JavaFileExtension getFileContentAtRevision(String filePath, RevCommit revision) throws IOException, DiffJException {
     RevTree tree = revWalk.parseCommit(revision.getId()).getTree();
     TreeWalk treeWalk = TreeWalk.forPath(repo, filePath, tree);
+    if(treeWalk == null) {
+      return null;
+    }
     ObjectId blobId = treeWalk.getObjectId(0);
     ObjectReader objectReader = repo.newObjectReader();
     ObjectLoader objectLoader = objectReader.open(blobId);
