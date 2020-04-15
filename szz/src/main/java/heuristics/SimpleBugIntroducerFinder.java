@@ -44,6 +44,7 @@ import util.RevisionCombinationGenerator;
  */
 public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
 
+  public static final int TIMEOUT_TO_PROCESS_INTRODUCER = 45000;
   private Issues issues;
   private Repository repo;
   private int depth;
@@ -178,52 +179,14 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
      * This check should be made smarter...
      */
     for (Map.Entry<String, List<String>> entry : bucketIntroducers.entrySet()) {
-      List<String> introducers = entry.getValue();
-      List<String> issues = bucketIssues.get(entry.getKey());
-
-      RevisionCombinationGenerator gen = new RevisionCombinationGenerator(introducers, issues, 2);
-      gen = gen.iterator();
-
-      while(gen.hasNext()) {
-        String[] pair = gen.getNextIndic();
-        if (pair[0] == "" && pair[1] == "")
-          continue;
-        
-        if (isWithinTimeframe(pair[1], pair[0])) {
-          bugIntroducers.add(pair);
-        } else {
-
-          if (!partialIntroducers.containsKey(entry.getKey())) {
-            partialIntroducers.put(entry.getKey(), new ArrayList<>());
-          }
-          partialIntroducers.get(entry.getKey()).add(pair[0]);
-
-          if (!partialIssues.containsKey(entry.getKey())) {
-            partialIssues.put(entry.getKey(), new ArrayList<>());
-          }
-          partialIssues.get(entry.getKey()).add(pair[1]);
-        }
-      }
+      processBucketIntroducer(bugIntroducers, bucketIssues, partialIntroducers, partialIssues, entry);
     }
 
     /*
      * Now check for partial fixes. If a commit is flagged as a fix, it is a candidate to be a partial fix.
      */
     for (Map.Entry<String, List<String>> suspects : partialIntroducers.entrySet()) {
-      List<String> introducers = suspects.getValue();
-      List<String> issues = partialIssues.get(suspects.getKey());
-
-      RevisionCombinationGenerator gen = new RevisionCombinationGenerator(introducers, issues, 2);
-      gen = gen.iterator();
-
-      while(gen.hasNext()) {
-        String[] pair = gen.getNextIndic();
-        if (pair[0] == "" && pair[1] == "")
-          continue;
-        if (isPartialFix(pair[0])) {
-          bugIntroducers.add(pair);
-        }
-      }
+      processPartialIntroducer(bugIntroducers, partialIssues, suspects);
     }
 
     /*
@@ -231,5 +194,53 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
      */
 
     return bugIntroducers;
+  }
+
+  private void processPartialIntroducer(List<String[]> bugIntroducers, Map<String, List<String>> partialIssues, Map.Entry<String, List<String>> suspects) throws IOException, GitAPIException {
+    long startTime = Calendar.getInstance().getTimeInMillis();
+    List<String> introducers = suspects.getValue();
+    List<String> issues = partialIssues.get(suspects.getKey());
+
+    RevisionCombinationGenerator gen = new RevisionCombinationGenerator(introducers, issues, 2);
+    gen = gen.iterator();
+
+    while(gen.hasNext() && (Calendar.getInstance().getTimeInMillis() - startTime < TIMEOUT_TO_PROCESS_INTRODUCER)) {
+      String[] pair = gen.getNextIndic();
+      if (pair[0] == "" && pair[1] == "")
+        continue;
+      if (isPartialFix(pair[0])) {
+        bugIntroducers.add(pair);
+      }
+    }
+  }
+
+  private void processBucketIntroducer(List<String[]> bugIntroducers, Map<String, List<String>> bucketIssues, Map<String, List<String>> partialIntroducers, Map<String, List<String>> partialIssues, Map.Entry<String, List<String>> entry) throws IOException, GitAPIException {
+    List<String> introducers = entry.getValue();
+    List<String> issues = bucketIssues.get(entry.getKey());
+    long startTime = Calendar.getInstance().getTimeInMillis();
+
+    RevisionCombinationGenerator gen = new RevisionCombinationGenerator(introducers, issues, 2);
+    gen = gen.iterator();
+
+    while(gen.hasNext() && (Calendar.getInstance().getTimeInMillis() - startTime < 30000)) {
+      String[] pair = gen.getNextIndic();
+      if (pair[0] == "" && pair[1] == "")
+        continue;
+
+      if (isWithinTimeframe(pair[1], pair[0])) {
+        bugIntroducers.add(pair);
+      } else {
+
+        if (!partialIntroducers.containsKey(entry.getKey())) {
+          partialIntroducers.put(entry.getKey(), new ArrayList<>());
+        }
+        partialIntroducers.get(entry.getKey()).add(pair[0]);
+
+        if (!partialIssues.containsKey(entry.getKey())) {
+          partialIssues.put(entry.getKey(), new ArrayList<>());
+        }
+        partialIssues.get(entry.getKey()).add(pair[1]);
+      }
+    }
   }
 }
